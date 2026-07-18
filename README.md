@@ -1,2 +1,2 @@
 # gemini-XPrize-Josh
-this is my gemini xprize projectt
+this is my gemini xprize project

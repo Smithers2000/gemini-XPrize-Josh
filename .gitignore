@@ -1,0 +1,10 @@
+#secrets and APi Keys
+.env
+.env.local
+
+#Node / Dependency directories (just in case you use them later)
+node_modules/
+
+# OS generated Files
+.DS_store
+Thumbs.db
