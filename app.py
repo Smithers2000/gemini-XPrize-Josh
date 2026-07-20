@@ -1,0 +1,1 @@
+#this is the main entry point where i will build a simple,clean app dashboard
