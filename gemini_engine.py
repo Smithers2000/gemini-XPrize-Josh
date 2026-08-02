@@ -6,7 +6,7 @@ load_dotenv()
 
 # Initialize gemini Client
 api_key = os.getenv("GEMINI_API_KEY")
-client = genai.client(api_key=api_key)
+client = genai.Client(api_key=api_key)
 
 def evaluate_spend_proposal(project_content, item_name, amount, justification):
     """
