@@ -27,16 +27,27 @@ def evaluate_spend_proposal(project_context, item_name, amount, justification):
     Return a clear verdict: APPROVED, REJECTED, or REQUIRES_COFOUNDER_VOTE.
     Provide a concise explanation (2-3 sentences) explaining your reasoning.
     """
+    #creates a priority list of models to attempt
+    candidate_models = [
+        'gemini-2.0-flash',
+        'gemini-2.0-flash-lite',
+        'gemini-1.5-flash-8b',
+        'gemini-1.5-pro'
+    ]
+    last_error = ""
 
-    try:
-        response = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt,
-        )
-        return response.text
-    except APIError as e:
-        if "429" in str(e):
-            return "⚠️ **Rate limit hit (Quota 429)**: Gemini is temporarily cooling down. Please wait ~15-30 seconds and click evaluate again!"
-        return f"⚠️ **Gemini API Notice**: {str(e)}"
-    except Exception as e:
-        return f"⚠️ an unexpected error occurred: {str(e)}"
+    for model_name in candidate_models:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            return response.text
+        except APIError as e:
+            last_error = str(e)
+            continue
+        except Exception as e:
+            last_error = str(e)
+            continue
+            
+    return f"⚠️ **Gemini API Notice**: Could not reach candidate models. Last error: {last_error}"
