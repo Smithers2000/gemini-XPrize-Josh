@@ -1,3 +1,8 @@
+"""
+Author: Joshua Smith
+Project: busicash
+Date: 8/1/2026
+Description: this gemini engine.py to connect to the google gemini API and evaluate spend proposals for student joint ventures"""
 import os
 import time
 from google import genai
@@ -10,10 +15,39 @@ load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=api_key)
 
+def get_active_model():
+    """
+    Queries Google AI Studio to fetch currently available models for this API key
+    and returns a live active model name.
+    """
+    """
+    try:
+        # Iterate through the Pager object returned by client.models.list()
+        models = client.models.list()
+        active_names = [m.name.replace("models/", "") for m in models]
+        
+        print("\n--- AVAILABLE MODELS FOR THIS API KEY ---")
+        print(active_names)
+        print("-----------------------------------------\n")
+        
+        # Pick the first available flash or pro model dynamically from live API list
+        for name in active_names:
+            if 'flash' in name or 'pro' in name:
+                return name
+                
+        return active_names[0] if active_names else 'gemini-flash-latest'
+        
+    except Exception as e:
+        print(f"Error fetching model list: {e}")
+        return 'gemini-flash-latest'
+    """
+    # For now, return a hardcoded model name
+    print("******** USING NEW GEMINI_ENGINE.PY ********")
+    return "gemini-3.6-flash"
+
 def evaluate_spend_proposal(project_context, item_name, amount, justification):
     """
     Evaluates a purchase request using Gemini as an automated compliance guardrail.
-    Uses gemini-1.5-flash with rate-limit error handling.
     """
     prompt = f"""
     You are BusiCash AI, an automated financial compliance guardrail for student joint ventures.
@@ -25,29 +59,20 @@ def evaluate_spend_proposal(project_context, item_name, amount, justification):
     
     Analyze if this expense aligns with the project goals and budget.
     Return a clear verdict: APPROVED, REJECTED, or REQUIRES_COFOUNDER_VOTE.
-    Provide a concise explanation (2-3 sentences) explaining your reasoning.
+    Provide a concise explanation (1-2 sentences) explaining your reasoning.
     """
-    #creates a priority list of models to attempt
-    candidate_models = [
-        'gemini-2.0-flash',
-        'gemini-2.0-flash-lite',
-        'gemini-1.5-flash-8b',
-        'gemini-1.5-pro'
-    ]
-    last_error = ""
 
-    for model_name in candidate_models:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-            )
-            return response.text
-        except APIError as e:
-            last_error = str(e)
-            continue
-        except Exception as e:
-            last_error = str(e)
-            continue
-            
-    return f"⚠️ **Gemini API Notice**: Could not reach candidate models. Last error: {last_error}"
+    selected_model = get_active_model()
+    print(f"Selected Model for Evaluation: {selected_model}")
+    
+    try:
+        response = client.models.generate_content(
+            model=selected_model,
+            contents=prompt,
+        )
+        return response.text
+    except APIError as e:
+        return f"⚠️ **Gemini API Error ({selected_model})**: {str(e)}"
+    except Exception as e:
+        return f"⚠️ Unexpected Error: {str(e)}"
+    
