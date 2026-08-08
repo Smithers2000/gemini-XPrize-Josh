@@ -16,10 +16,9 @@ DB_FILE = "ventures_db.json"
 load_dotenv()
 
 # Find the service account json file automatically in your directory
-json_files = [f for f in os.listdir('.') if f.endswith('.json') and 'service' in f.lower() or 'firebase' in f.lower()]]
+json_files = [f for f in os.listdir('.') if f.endswith('.json') and ('service' in f.lower() or 'firebase' in f.lower())]
 if not json_files:
     json_files = [f for f in os.listdir('.') if f.endswith('.json')]
-    raise FileNotFoundError("Could not find your Firebase service account JSON file.")
 
 # Use the first JSON file found to initialize the SDK
 if json_files and not firebase_admin._apps:
@@ -32,14 +31,15 @@ db = firestore.client() if firebase_admin._apps else None
 def create_mock_project(project_name, total_balance, members):
     """Creates a project in the Firestore cloud database."""
     if db:
-    project_ref = db.collection('projects').document()
-    project_ref.set({
-        'name': project_name,
-        'total_balance': total_balance,
-        'members': members
-    })
-    print(f"Created project '{project_name}' with ID: {project_ref.id}")
-    return project_ref.id
+        project = db.collection('projects').document()
+        project.set({
+            'name': project_name,
+            'total_balance': total_balance,
+            'members': members
+        })
+        print(f"Created project '{project_name}' with ID: {project.id}")
+        return project.id
+    return "local_mock_id"
 
 def get_projects():
     """Fetches all existing collaborative projects from the database."""
@@ -63,6 +63,7 @@ def load_db():
             except json.JSONDecodeError:
                 print("Error decoding JSON file.")
                 return {}
+    return {}
 
 def save_db(data):
     """Saves the database to a local JSON file."""
@@ -94,8 +95,9 @@ def create_or_update_venture(name, capital, members):
             "pending_votes": []
         }
         save_db(db)
-        print("created a new venture in the database: {name}")
+        print(f"created a new venture in the database: {name}")
         return db[name]
+    return db[name]
     """ (INTERNAL WORKINGS)
     venture = get_venture_by_name(name)
     if venture:
@@ -111,20 +113,20 @@ def create_or_update_venture(name, capital, members):
         create_mock_project(name, capital, members)
         """ 
 
-def record_transaction(venture_name, item, cost,justification, verdict, explination):
+def record_transaction(venture_name, item, cost, justification, verdict, explanation):
     """Records a transaction in the venture's history."""
-    db = load(db)
+    db = load_db()
     if venture_name in db:
         transaction = {
             "item": item,
             "cost": float(cost),
             "justification": justification,
             "verdict": verdict,
-            "explination":explination
+            "explanation": explanation
         }
 
-        #deduct the balance from the capital pool if approved by the AI
-        if "APPROVED" in verdict.upper() and "REQUEST" not in verdict.upper():
+        # Deduct the balance from the capital pool if approved by the AI
+        if "APPROVED" in verdict.upper() and "REQUIRES" not in verdict.upper():
             db[venture_name]["capital_pool"] -= float(cost)
             db[venture_name]["transactions"].append(transaction)
         elif "REQUIRES" in verdict.upper():
@@ -133,8 +135,6 @@ def record_transaction(venture_name, item, cost,justification, verdict, explinat
             db[venture_name]["transactions"].append(transaction)
 
         save_db(db)
-        print("Recorded transaction for venture: {venture_name}")
+        print(f"Recorded transaction for venture: {venture_name}")
         return db[venture_name]
-    return None    
-
-        
+    return None
