@@ -6,8 +6,8 @@ Description: this app.py will be the entry point to the app that will biuld a da
 """
 """ version 1.1 """
 import streamlit as st
-import database
-import gemini_engine
+import database as db
+import gemini_engine as ge
 
 st.set_page_config(page_title="BusiCash - Student Sandboxing Dashboard", layout="wide")
 
@@ -27,36 +27,70 @@ if st.sidebar.button("Launch Shared Pool"):
 
 # Main Window displaying active portfolios
 st.header("📊 Active Group Portfolios")
-active_projects = database.get_projects()
 
-if not active_projects:
-    st.info("No active projects found yet. Use the sidebar to deploy your first joint venture project pool!")
-else:
-    for proj in active_projects:
-        with st.expander(f"📁 {proj['name']} — Capital Pool: ${proj['total_balance']:,}", expanded=True):
-            st.write("**Venture Partners:**", ", ".join(proj['members']))
-            
-            st.markdown("---")
-            st.markdown("#### 🛒 Submit a Purchase Proposal")
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                item_name = st.text_input(f"Item Name ({proj['name']})", key=f"item_{proj['id']}")
-                justification = st.text_area("Why is this essential for the business?", key=f"just_{proj['id']}")
-            with col2:
-                amount = st.number_input("Cost ($)", min_value=1, value=150, key=f"cost_{proj['id']}")
-                submit_btn = st.button("Evaluate with Gemini AI Guardrail", key=f"btn_{proj['id']}")
+venture_data = db.get_venture(project_name)
+if not venture_data:
+    members = [m.stripe() for m in members_raw.split(",")]
+    venture_data = db.create_or_update_venture(project_name, starting_capital, members)
 
-            if submit_btn and item_name and justification:
-                with st.spinner("Gemini AI is evaluating proposal against project goals..."):
-                    context = f"Business: {proj['name']}, Pool Balance: ${proj['total_balance']}"
-                    verdict = gemini_engine.evaluate_spend_proposal(
-                        project_context=context,
-                        item_name=item_name,
-                        amount=amount,
-                        justification=justification
-                    )
-                    
-                    st.markdown("### 🤖 Gemini Compliance Verdict")
-                    st.info(verdict)
+#Display Capital Metrics
+col1, col2 = st.columns(2)
+with col1:
+    st.metric(label="Remaining Capital Pool", value=f"${venture_data['capital_pool']:,.2f}")
+with col2:
+    st.write(f"**Venture Partners:** {', '.join(venture_data['members'])}") 
 
+st.divider()
+
+#Purchase Proposal Form
+st.subheader("Submit a Purchase Proposal ")
+p_col1,p_col2 = st.columns([3,1])
+with p_col1:
+    item_name = st.text_input("Item Name", placeholder="e.g., marketing ads, Helmets, Software License, Spare Tire")
+with p_col2:
+        cost = st.number_input("Cost ($)", min_value=0.0, value=1.0, step=10.0)
+
+justification = st.text_area("why is this essential for the business?", placeholder="Describe how this purchase directly supports venture goals. e.g., Replacement tire for rental fleet")
+
+if st.button("Evaluate with Gemini AI Guardrail"):
+    with st.spinner("analysing prposal against the business scope and budget..."):
+        ai_response = ge.evaluate_spend_proposal(project_name, item, cost, justification)
+
+        #extract basic verdict direction
+        verdict = "REJECTED"
+        if"APPROVED" in ai_response.upper():
+            verdict = "APPROVED"
+        elif "REQUIRES" in ai_response.upper() or "VOTE" in ai_response.upper():
+            verdict = "REQUIRES_COFOUNDER_VOTE"
+
+        #Update database
+        updated_venture = db.record_transaction(project_name, item_name, cost, justification, verdict, ai_response)
+
+        st.subheader("🤖 Gemini Compliance Verdict")
+        if verdict == "APPROVED":
+            st.success(ai_response)
+        elif verdict == "REQUIRES_COFOUNDER_VOTE":    
+            st.warning(ai_response)
+        else:
+            st.error(ai_response)
+
+        st.rerun()
+
+    #ledger section
+    st.divider()
+    st.header("Venture audit ledger & History")
+    if venure_data["transactions"]:
+        st.table(venure_data["transactions"])
+    else:
+        st.info("No recorded transactions yet.")                
+        """ (inner context example of background)
+        context = f"Business: {venture_data['name']}, Pool Balance: ${venture_data['capital_pool']}"
+        verdict = ge.evaluate_spend_proposal(
+            project_context=context,
+            item_name=item_name,
+            amount=cost,
+            justification=justification
+        )
+        
+        st.markdown("### 🤖 Gemini Compliance Verdict")
+        st.info(verdict)"""
