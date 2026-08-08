@@ -28,7 +28,7 @@ if st.sidebar.button("Launch Shared Pool"):
 # Main Window displaying active portfolios
 st.header("📊 Active Group Portfolios")
 
-venture_data = db.get_venture(project_name)
+venture_data = db.get_venture_by_name(project_name)
 if not venture_data:
     members = [m.stripe() for m in members_raw.split(",")]
     venture_data = db.create_or_update_venture(project_name, starting_capital, members)
