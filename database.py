@@ -31,14 +31,14 @@ db = firestore.client() if firebase_admin._apps else None
 def create_mock_project(project_name, total_balance, members):
     """Creates a project in the Firestore cloud database."""
     if db:
-        project_ref = db.collection('projects').document()
-        project_ref.set({
+        project = db.collection('projects').document()
+        project.set({
             'name': project_name,
             'total_balance': total_balance,
             'members': members
         })
-        print(f"Created project '{project_name}' with ID: {project_ref.id}")
-        return project_ref.id
+        print(f"Created project '{project_name}' with ID: {project.id}")
+        return project.id
     return "local_mock_id"
 
 def get_projects():
@@ -63,7 +63,7 @@ def load_db():
             except json.JSONDecodeError:
                 print("Error decoding JSON file.")
                 return {}
-    print("ventures_db.json does not exist yet. Initializing new database dictionary.")
+    print("ventures_db.json does not exist yet. Initializing new database dictionary.")        
     return {}
 
 def save_db(data):
