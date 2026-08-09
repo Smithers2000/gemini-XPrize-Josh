@@ -2,159 +2,181 @@
 Author: Joshua Smith
 Project: busicash
 Date: 8/1/2026
-Description: this database.py will manage initializing Firebase and pulling data
+Description: database.py - Firestore-backed persistence layer for BusiCash.
+
+Architecture notes (v1.3 - cloud-native rewrite):
+- Each venture is a document in the top-level `ventures` collection, keyed by a
+  URL-safe SLUG of its name (not an auto-ID), so a lookup is a single O(1)
+  `.document(slug).get()` instead of the old `.where('name', '==', ...)` query
+  scan across the whole collection.
+- `transactions` and `pending_votes` are SUBCOLLECTIONS, not arrays on the
+  venture document. Firestore documents cap out at 1 MiB and every array
+  update rewrites the whole array. Subcollections let the ledger grow
+  unbounded, support pagination/cursors later, and let two people write to
+  the ledger at the same time without clobbering each other's array edits.
+- Capital pool deductions run inside a Firestore transaction
+  (`@firestore.transactional`), so two near-simultaneous approvals can't both
+  read the same stale balance and overdraw the pool - a real race condition
+  once multiple co-founders are acting concurrently.
 """
 import os
+import re
 import firebase_admin
-import json
 from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
 
-# Load your local secrets from the .env file
 load_dotenv()
 
-# Find the service account json file automatically in your directory
-json_files = [f for f in os.listdir('.') if f.endswith('.json') and ('service' in f.lower() or 'firebase' in f.lower())]
-if not json_files:
-    json_files = [f for f in os.listdir('.') if f.endswith('.json')]
 
-# Use the first JSON file found to initialize the SDK
-if json_files and not firebase_admin._apps:
-    cred = credentials.Certificate(json_files[0])
-    firebase_admin.initialize_app(cred)
+def _init_firebase():
+    """Looks for GOOGLE_APPLICATION_CREDENTIALS first (standard for cloud
+    deploys - Cloud Run, App Engine, etc. all set this), then falls back to
+    any *service*.json / *firebase*.json in the project root for local dev."""
+    if firebase_admin._apps:
+        return
 
-# Connect to the cloud Firestore database
-db = firestore.client() if firebase_admin._apps else None
+    cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    if cred_path and os.path.exists(cred_path):
+        firebase_admin.initialize_app(credentials.Certificate(cred_path))
+        return
 
-def get_venture_by_name(venture_name):
-    """Fetches a venture by name directly from cloud firestorefrom the database."""
-    if not db:
-        print("Firestore not initialized.")
+    json_files = [
+        f for f in os.listdir(".")
+        if f.endswith(".json") and ("service" in f.lower() or "firebase" in f.lower())
+    ]
+    if json_files:
+        firebase_admin.initialize_app(credentials.Certificate(json_files[0]))
+        return
+
+    raise RuntimeError(
+        "No Firebase credentials found. Set GOOGLE_APPLICATION_CREDENTIALS to "
+        "your service account JSON path, or place a *-service-account.json "
+        "file in the project root."
+    )
+
+
+_init_firebase()
+db = firestore.client()
+
+
+def _slugify(name: str) -> str:
+    """Turns a venture name into a Firestore-safe, human-readable document ID."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    return slug or "venture"
+
+
+def _hydrate(ref, snap):
+    """Attaches transaction + pending-vote subcollections to a venture doc."""
+    data = snap.to_dict()
+    data["transactions"] = [
+        {**doc.to_dict(), "id": doc.id}
+        for doc in ref.collection("transactions")
+        .order_by("timestamp", direction=firestore.Query.DESCENDING)
+        .stream()
+    ]
+    data["pending_votes"] = [
+        {**doc.to_dict(), "id": doc.id}
+        for doc in ref.collection("pending_votes")
+        .order_by("timestamp", direction=firestore.Query.DESCENDING)
+        .stream()
+    ]
+    return data
+
+
+def get_venture(venture_name):
+    """Fetches one venture (with transactions + pending votes). None if missing."""
+    ref = db.collection("ventures").document(_slugify(venture_name))
+    snap = ref.get()
+    if not snap.exists:
         return None
+    return _hydrate(ref, snap)
 
-    print(f"Searching for venture: {venture_name}")
-    docs = db.collection('projects').where('name', '==', venture_name).limit(1).stream()
-    for doc in docs:
-        data = doc.to_dict()
-        data['id'] = doc.id
-        return data
-    return None
-    
-def create_or_update_venture(name, capital, members):
-    """Creates or updates a venture in the database. if document is in Firestore it returns the existing one., if it doesn't exist it it returns none."""
-    if not db:
-        print("Firestore not initialized.")
-        return None
 
-    venture = get_venture_by_name(name)
-    if venture:
-        return venture
+def get_all_ventures():
+    """Fetches every venture - useful for a future 'browse all groups' view."""
+    result = {}
+    for snap in db.collection("ventures").stream():
+        ref = db.collection("ventures").document(snap.id)
+        data = _hydrate(ref, snap)
+        result[data["name"]] = data
+    return result
 
-    doc_ref = db.collection('projects').document()
-    new_venture = {
-        "name": name,
-        "capital_pool": float(capital),
-        "members": members,
-        "transactions": [],
-        "pending_votes": []
-    }
-    doc_ref.set(new_venture)
-    new_venture['id'] = doc_ref.id
-    print(f"Created new venture in Firestore with ID: {doc_ref.id}")
-    return new_venture
+
+def create_venture(name, capital, members):
+    """Creates a venture doc if it doesn't exist yet. Returns it either way."""
+    ref = db.collection("ventures").document(_slugify(name))
+    if not ref.get().exists:
+        ref.set({
+            "name": name,
+            "capital_pool": float(capital),
+            "members": members,
+            "created_at": firestore.SERVER_TIMESTAMP,
+        })
+        print(f"Created new venture in Firestore: {name}")
+    return get_venture(name)
+
+
+@firestore.transactional
+def _deduct_and_log(transaction, ref, payload):
+    """Reads the current balance, deducts, and writes the ledger entry as a
+    single atomic unit - prevents lost updates under concurrent approvals."""
+    snap = ref.get(transaction=transaction)
+    new_balance = snap.get("capital_pool") - payload["cost"]
+    transaction.update(ref, {"capital_pool": new_balance})
+    transaction.set(ref.collection("transactions").document(), payload)
+
+
+def _apply_approved_spend(ref, payload):
+    transaction = db.transaction()
+    _deduct_and_log(transaction, ref, payload)
+
 
 def record_transaction(venture_name, item, cost, justification, verdict, explanation):
-    #Records a transaction in the venture's history.
-    #Updates venture document in Cloud Firestore with new purchase transaction and updated balance.
-    if not db:
-        print("Firestore not initialized.")
+    """Records a spend proposal's outcome. APPROVED atomically deducts from
+    capital_pool; REQUIRES_COFOUNDER_VOTE goes to pending_votes; REJECTED is
+    logged straight to the ledger. Returns the updated venture, or None."""
+    ref = db.collection("ventures").document(_slugify(venture_name))
+    if not ref.get().exists:
         return None
 
-    venture = get_venture_by_name(venture_name)
-    if not venture:
-        print(f"Venture not found: {venture_name}")
+    payload = {
+        "item": item,
+        "cost": float(cost),
+        "justification": justification,
+        "verdict": verdict,
+        "explanation": explanation,
+        "timestamp": firestore.SERVER_TIMESTAMP,
+    }
+
+    verdict_upper = verdict.upper()
+    if verdict_upper == "APPROVED":
+        _apply_approved_spend(ref, payload)
+    elif verdict_upper == "REQUIRES_COFOUNDER_VOTE":
+        ref.collection("pending_votes").add(payload)
+    else:  # REJECTED
+        ref.collection("transactions").add(payload)
+
+    print(f"Recorded transaction for venture: {venture_name}")
+    return get_venture(venture_name)
+
+
+def resolve_vote(venture_name, vote_id, approved):
+    """Moves a pending co-founder vote into the ledger once the group decides.
+    Approving atomically deducts the cost from capital_pool."""
+    ref = db.collection("ventures").document(_slugify(venture_name))
+    vote_ref = ref.collection("pending_votes").document(vote_id)
+    vote_snap = vote_ref.get()
+    if not vote_snap.exists:
         return None
 
-    document = db.collection('projects').document(venture['id'])
-    transaction = {
-                "item": item,
-                "cost": float(cost),
-                "justification": justification,
-                "verdict": verdict,
-                "explanation": explanation
-            }
+    vote = vote_snap.to_dict()
+    vote["verdict"] = "APPROVED (co-founder vote)" if approved else "REJECTED (co-founder vote)"
 
-    capital_pool = float(venture.get("capital_pool",0.0))
-    transactions = venture.get("transactions",[])
-    pending_votes = venture.get("pending_votes",[])        
+    if approved:
+        transaction = db.transaction()
+        _deduct_and_log(transaction, ref, vote)
+    else:
+        ref.collection("transactions").add(vote)
 
-    # Deduct the balance from the capital pool if approved by the AI
-    if "APPROVED" in verdict.upper() and "REQUIRES" not in verdict.upper():
-        capital_pool -= float(cost)
-        transactions.append(transaction)
-    elif "REQUIRES" in verdict.upper():
-        pending_votes.append(transaction)
-    else:     
-        transactions.append(transaction)
-
-    # Update the venture document in Firestore
-    document.update({
-        "capital_pool": capital_pool,
-        "transactions": transactions,
-        "pending_votes": pending_votes
-    })
-
-    venture["capital_pool"] = capital_pool
-    venture["transactions"]=transactions
-    venture["pending_votes"]=pending_votes
-    print(f"Recorded transaction for venture '{venture_name}': {transaction}")
-    return venture
-   
-""" for local testing, you can use a JSON file to simulate the database. This is useful for development without needing to connect to Firestore.
-#Creates a project in the Firestore cloud database.
-def create_mock_project(project_name, total_balance, members):
-    if db:
-        project = db.collection('projects').document()
-        project.set({
-            'name': project_name,
-            'total_balance': total_balance,
-            'members': members
-        })
-        print(f"Created project '{project_name}' with ID: {project.id}")
-        return project.id
-    return "local_mock_id"
-
-def get_projects():
-    # Fetches all existing collaborative projects from the database.
-    projects = []
-    if db:
-        docs = db.collection('projects').stream()
-        for doc in docs:
-            data = doc.to_dict()
-            data['id'] = doc.id
-            projects.append(data)
-            print(f"Fetched project: {data['name']} with ID: {doc.id}")
-    return projects
-
-def load_db():
-    # Loads the database from a local JSON file.
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, 'r') as f:
-            try:
-                print("Loading database from JSON file.")
-                return json.load(f)
-            except json.JSONDecodeError:
-                print("Error decoding JSON file.")
-                return {}
-    print("ventures_db.json does not exist yet. Initializing new database dictionary.")        
-    return {}
-
-def save_db(data):
-    # Saves the database to a local JSON file.
-    with open(DB_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
-"""
-
-
-
-
+    vote_ref.delete()
+    return get_venture(venture_name)
