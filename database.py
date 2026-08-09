@@ -10,8 +10,6 @@ import json
 from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
 
-DB_FILE = "ventures_db.json"
-
 # Load your local secrets from the .env file
 load_dotenv()
 
@@ -28,8 +26,93 @@ if json_files and not firebase_admin._apps:
 # Connect to the cloud Firestore database
 db = firestore.client() if firebase_admin._apps else None
 
+def get_venture_by_name(venture_name):
+    """Fetches a venture by name directly from cloud firestorefrom the database."""
+    if not db:
+        print("Firestore not initialized.")
+        return None
+
+    print(f"Searching for venture: {venture_name}")
+    docs = db.collection('projects').where('name', '==', venture_name).limit(1).stream()
+    for doc in docs:
+        data = doc.to_dict()
+        data['id'] = doc.id
+        return data
+    return None
+    
+def create_or_update_venture(name, capital, members):
+    """Creates or updates a venture in the database. if document is in Firestore it returns the existing one., if it doesn't exist it it returns none."""
+    if not db:
+        print("Firestore not initialized.")
+        return None
+
+    venture = get_venture_by_name(name)
+    if venture:
+        return venture
+
+    doc_ref = db.collection('projects').document()
+    new_venture = {
+        "name": name,
+        "capital_pool": float(capital),
+        "members": members,
+        "transactions": [],
+        "pending_votes": []
+    }
+    doc_ref.set(new_venture)
+    new_venture['id'] = doc_ref.id
+    print(f"Created new venture in Firestore with ID: {doc_ref.id}")
+    return new_venture
+
+def record_transaction(venture_name, item, cost, justification, verdict, explanation):
+    #Records a transaction in the venture's history.
+    #Updates venture document in Cloud Firestore with new purchase transaction and updated balance.
+    if not db:
+        print("Firestore not initialized.")
+        return None
+
+    venture = get_venture_by_name(venture_name)
+    if not venture:
+        print(f"Venture not found: {venture_name}")
+        return None
+
+    document = db.collection('projects').document(venture['id'])
+    transaction = {
+                "item": item,
+                "cost": float(cost),
+                "justification": justification,
+                "verdict": verdict,
+                "explanation": explanation
+            }
+
+    capital_pool = float(venture.get("capital_pool",0.0))
+    transactions = venture.get("transactions",[])
+    pending_votes = venture.get("pending_votes",[])        
+
+    # Deduct the balance from the capital pool if approved by the AI
+    if "APPROVED" in verdict.upper() and "REQUIRES" not in verdict.upper():
+        capital_pool -= float(cost)
+        transactions.append(transaction)
+    elif "REQUIRES" in verdict.upper():
+        pending_votes.append(transaction)
+    else:     
+        transactions.append(transaction)
+
+    # Update the venture document in Firestore
+    document.update({
+        "capital_pool": capital_pool,
+        "transactions": transactions,
+        "pending_votes": pending_votes
+    })
+
+    venture["capital_pool"] = capital_pool
+    venture["transactions"]=transactions
+    venture["pending_votes"]=pending_votes
+    print(f"Recorded transaction for venture '{venture_name}': {transaction}")
+    return venture
+   
+""" for local testing, you can use a JSON file to simulate the database. This is useful for development without needing to connect to Firestore.
+#Creates a project in the Firestore cloud database.
 def create_mock_project(project_name, total_balance, members):
-    """Creates a project in the Firestore cloud database."""
     if db:
         project = db.collection('projects').document()
         project.set({
@@ -42,7 +125,7 @@ def create_mock_project(project_name, total_balance, members):
     return "local_mock_id"
 
 def get_projects():
-    """Fetches all existing collaborative projects from the database."""
+    # Fetches all existing collaborative projects from the database.
     projects = []
     if db:
         docs = db.collection('projects').stream()
@@ -54,7 +137,7 @@ def get_projects():
     return projects
 
 def load_db():
-    """Loads the database from a local JSON file."""
+    # Loads the database from a local JSON file.
     if os.path.exists(DB_FILE):
         with open(DB_FILE, 'r') as f:
             try:
@@ -67,74 +150,11 @@ def load_db():
     return {}
 
 def save_db(data):
-    """Saves the database to a local JSON file."""
+    # Saves the database to a local JSON file.
     with open(DB_FILE, 'w') as f:
         json.dump(data, f, indent=4)
+"""
 
-def get_venture_by_name(venture_name):
-    """Fetches a venture by name from the database."""
-    """ (INTERNAL WORKINGS)
-    docs = db.collection('projects').where('name', '==', venture_name).stream()
-    for doc in docs:
-        data = doc.to_dict()
-        data['id'] = doc.id
-        return data
-    return None
-    """
-    db = load_db()
-    print(f"Searching for venture: {venture_name}")
-    return db.get(venture_name, None)
 
-def create_or_update_venture(name, capital, members):
-    """Creates or updates a venture in the database."""
-    db = load_db()
-    if name not in db:
-        db[name] = {
-            "capital_pool": float(capital),
-            "members": members,
-            "transactions": [],
-            "pending_votes": []
-        }
-        save_db(db)
-        print(f"created a new venture in the database: {name}")
-    return db[name]
-    """ (INTERNAL WORKINGS)
-    venture = get_venture_by_name(name)
-    if venture:
-        # Update existing venture
-        venture_ref = db.collection('projects').document(venture['id'])
-        venture_ref.update({
-            'total_balance': capital,
-            'members': members
-            ...
-        })
-    else:
-        # Create new venture
-        create_mock_project(name, capital, members)
-        """ 
 
-def record_transaction(venture_name, item, cost, justification, verdict, explanation):
-    """Records a transaction in the venture's history."""
-    db = load_db()
-    if venture_name in db:
-        transaction = {
-            "item": item,
-            "cost": float(cost),
-            "justification": justification,
-            "verdict": verdict,
-            "explanation": explanation
-        }
 
-        # Deduct the balance from the capital pool if approved by the AI
-        if "APPROVED" in verdict.upper() and "REQUIRES" not in verdict.upper():
-            db[venture_name]["capital_pool"] -= float(cost)
-            db[venture_name]["transactions"].append(transaction)
-        elif "REQUIRES" in verdict.upper():
-            db[venture_name]["pending_votes"].append(transaction)
-        else:     
-            db[venture_name]["transactions"].append(transaction)
-
-        save_db(db)
-        print(f"Recorded transaction for venture: {venture_name}")
-        return db[venture_name]
-    return None
