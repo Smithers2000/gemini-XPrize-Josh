@@ -65,7 +65,7 @@ def _slugify(name: str) -> str:
     return slug or "venture"
 
 
-def _hydrate(ref, snap):
+def attech_ledger_data(ref, snap):
     """Attaches transaction + pending-vote subcollections to a venture doc."""
     data = snap.to_dict()
     data["transactions"] = [

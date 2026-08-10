@@ -11,27 +11,52 @@ import gemini_engine as ge
 
 st.set_page_config(page_title="BusiCash - Student Sandboxing Dashboard", layout="wide")
 
-st.title("💸 BusiCash Sandbox Dashboard")
+st.title("BusiCash Sandbox Dashboard")
 st.subheader("Automated AI Multi-Sig Governance for Young Founders")
 
-# ---- Sidebar: create a new venture ----
-st.sidebar.header("🚀 Create a New Venture Group")
-project_name = st.sidebar.text_input("Project / Business Name", value="Electric Scooter Rental")
-starting_capital = st.sidebar.number_input("Starting Capital Pool ($)", min_value=10, value=3000)
-partner_ids = st.sidebar.text_input("Member IDs (comma separated)", value="Joshua, Friend1")
-members_list = [name.strip() for name in partner_ids.split(",") if name.strip()]
+# ---- Sidebar: pick an existing venture, or start a brand new one ----
+st.sidebar.header("Ventures")
 
-if st.sidebar.button("Launch Shared Pool"):
-    database.create_venture(project_name, starting_capital, members_list)
-    st.sidebar.success(f"Project '{project_name}' is live!")
-    st.rerun()
+venture_names = database.list_venture_names()
+NEW_VENTURE_LABEL = "+ Start a New Venture"
+options = venture_names + [NEW_VENTURE_LABEL]
+
+remembered = st.session_state.get("selected_venture")
+if remembered in options:
+    default_index = options.index(remembered)
+elif venture_names:
+    default_index = 0
+else:
+    default_index = len(options) - 1
+
+choice = st.sidebar.selectbox("Choose a venture", options, index=default_index)
+
+if choice == NEW_VENTURE_LABEL:
+    st.sidebar.subheader("Create a New Venture Group")
+    name_input = st.sidebar.text_input("Project / Business Name", value="")
+    starting_capital = st.sidebar.number_input("Starting Capital Pool ($)", min_value=10, value=1000)
+    partner_ids = st.sidebar.text_input("Member IDs (comma separated)", value="")
+    members_list = [n.strip() for n in partner_ids.split(",") if n.strip()]
+
+    if st.sidebar.button("Launch Shared Pool"):
+        if not name_input.strip():
+            st.sidebar.error("Give your venture a name first.")
+        elif not members_list:
+            st.sidebar.error("Add at least one member.")
+        else:
+            database.create_venture(name_input, starting_capital, members_list)
+            st.session_state.selected_venture = name_input
+            st.rerun()
+
+    st.info("👈 Fill out the sidebar and click **Launch Shared Pool** to create your first venture.")
+    st.stop()
+
+project_name = choice
+st.session_state.selected_venture = choice
+venture_data = database.get_venture(project_name)
 
 # ---- Main window ----
-st.header("📊 Active Group Portfolios")
-
-venture_data = database.get_venture(project_name)
-if not venture_data:
-    venture_data = database.create_venture(project_name, starting_capital, members_list)
+st.header(f"📊 {project_name}")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -95,7 +120,6 @@ if venture_data.get("pending_votes"):
                 st.rerun()
 
 # ---- Ledger ----
-st.divider()
 st.header("Venture Audit Ledger & History")
 if venture_data.get("transactions"):
     st.table(venture_data["transactions"])
