@@ -11,14 +11,14 @@ import gemini_engine as ge
 
 st.set_page_config(page_title="BusiCash - Student Sandboxing Dashboard", layout="wide")
 
-st.title("BusiCash Sandbox Dashboard")
+st.title("💸 BusiCash Sandbox Dashboard")
 st.subheader("Automated AI Multi-Sig Governance for Young Founders")
 
 # ---- Sidebar: pick an existing venture, or start a brand new one ----
-st.sidebar.header("Ventures")
+st.sidebar.header("🚀 Ventures")
 
 venture_names = database.list_venture_names()
-NEW_VENTURE_LABEL = "+ Start a New Venture"
+NEW_VENTURE_LABEL = "➕ Start a New Venture"
 options = venture_names + [NEW_VENTURE_LABEL]
 
 remembered = st.session_state.get("selected_venture")

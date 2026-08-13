@@ -65,7 +65,7 @@ def _slugify(name: str) -> str:
     return slug or "venture"
 
 
-def attech_ledger_data(ref, snap):
+def _attach_ledger_data(ref, snap):
     """Attaches transaction + pending-vote subcollections to a venture doc."""
     data = snap.to_dict()
     data["transactions"] = [
@@ -89,7 +89,17 @@ def get_venture(venture_name):
     snap = ref.get()
     if not snap.exists:
         return None
-    return _hydrate(ref, snap)
+    return _attach_ledger_data(ref, snap)
+
+
+def list_venture_names():
+    """Cheap listing of venture display names only - does NOT touch the
+    transactions/pending_votes subcollections. Use this to populate a picker;
+    use get_venture(name) to fetch full details for just the one selected."""
+    return sorted(
+        doc.to_dict().get("name", doc.id)
+        for doc in db.collection("ventures").stream()
+    )
 
 
 def get_all_ventures():
@@ -97,7 +107,7 @@ def get_all_ventures():
     result = {}
     for snap in db.collection("ventures").stream():
         ref = db.collection("ventures").document(snap.id)
-        data = _hydrate(ref, snap)
+        data = _attach_ledger_data(ref, snap)
         result[data["name"]] = data
     return result
 

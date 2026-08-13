@@ -17,3 +17,7 @@ Thumbs.db
 
 #  cred = credentials.Certificate("path/to/serviceAccountKey.json")
 #  firebase_admin.initialize_app(cred)
+
+#we also need it to not commit the byte code that we generate when we run the code, so we will add the following to the .gitignore file:
+__pycache__/
+*.pyc
