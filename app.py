@@ -163,3 +163,23 @@ if venture_slug:
                     st.rerun()
                 else:
                     st.error(msg)
+
+#added a sone or setting expander in the sidebar or main dashboard view allowing the co-founder to leave or disolve the active venture
+venture_slug = st.session_state.get("Selected_venture_slug") # acces the current venture from the dahboard
+current_user = st.session_state.get("Current user","Founder_Alice") # access the current user who is one of the founders in the venture
+
+if venture_slug:
+    st.sidebar.markdown("---")
+    with st.sidebar.expander(" Venture settings & Danger Zone"):
+        st.write(f"Active User: **{current_user}**")
+                       
+        #Option 1: Leave/Exit Venture
+        if st.button("Exit Venture", use_container_width=True):
+            success, msg = db.exit_venture(venture_slug, current_user)
+            if success:
+            st.success(msg)
+                # Reset selected venture and refresh
+                st.session_state["selected_venture_slug"] = None
+                st.rerun()
+            else:
+                st.error(msg)    
