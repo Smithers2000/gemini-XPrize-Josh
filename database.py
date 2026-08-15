@@ -323,7 +323,7 @@ def exit_venture(venture_slug:str, user_id:str):
 
         #If no members are left, purge the venture document
         transaction.delete(venture)
-        return Turem f"you were the last member. Venture 'data.get('name',venture_slug)}' has been deleted."
+        return Ture, f"you were the last member. Venture '{data.get('name',venture_slug)}' has been deleted."
 
     transaction = db.transaction()
     return execute_exit(tranaction)
