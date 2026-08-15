@@ -9,18 +9,18 @@ import streamlit as st
 import database
 import gemini_engine as ge
 
+#this will create the page and make it so the headings of the app
 st.set_page_config(page_title="BusiCash - Student Sandboxing Dashboard", layout="wide")
-
 st.title("💸 BusiCash Sandbox Dashboard")
 st.subheader("Automated AI Multi-Sig Governance for Young Founders")
 
 # ---- Sidebar: pick an existing venture, or start a brand new one ----
 st.sidebar.header("🚀 Ventures")
-
 venture_names = database.list_venture_names()
 NEW_VENTURE_LABEL = "➕ Start a New Venture"
 options = venture_names + [NEW_VENTURE_LABEL]
 
+#get the selected venture from the sidebar and keep it loaded
 remembered = st.session_state.get("selected_venture")
 if remembered in options:
     default_index = options.index(remembered)
@@ -29,8 +29,8 @@ elif venture_names:
 else:
     default_index = len(options) - 1
 
+#select a venture from the ventures, if it is new populate the values with placholders for the user to see
 choice = st.sidebar.selectbox("Choose a venture", options, index=default_index)
-
 if choice == NEW_VENTURE_LABEL:
     st.sidebar.subheader("Create a New Venture Group")
     name_input = st.sidebar.text_input("Project / Business Name", value="")
@@ -50,20 +50,18 @@ if choice == NEW_VENTURE_LABEL:
 
     st.info("👈 Fill out the sidebar and click **Launch Shared Pool** to create your first venture.")
     st.stop()
-
+# if the project does exist and the user selected it(will be done by this stage) then we load it into the session
 project_name = choice
 st.session_state.selected_venture = choice
 venture_data = database.get_venture(project_name)
 
 # ---- Main window ----
 st.header(f"📊 {project_name}")
-
 col1, col2 = st.columns(2)
 with col1:
     st.metric(label="Remaining Capital Pool", value=f"${venture_data['capital_pool']:,.2f}")
 with col2:
     st.write(f"**Venture Partners:** {', '.join(venture_data['members'])}")
-
 st.divider()
 
 # ---- Purchase proposal form ----
@@ -125,3 +123,43 @@ if venture_data.get("transactions"):
     st.table(venture_data["transactions"])
 else:
     st.info("No recorded transactions yet.")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("👤 current User Context")
+current_user = st.sidebar.selectbox("Simulate logged-in Co-founder:", ["Founder_Alice","Founder_Bob", "Founder_Charlie"])    
+
+# Active Venture Context (Assuming venture_slug is selected)
+venture_slug = st.session_state.get("selected_venture_slug")
+
+if venture_slug:
+    st.header("Pending Co-Founder Votes")
+
+    pending_proposals = db.get_pending_proposals(venture_slug)
+    if not pending_proposals:
+        st.info("No active proposals awaiting vote.")
+    else:
+        for prop in pending_proposals:
+            with st.expander(f" **{prop['item_name']}** - ${prop['cost']:.2f} (Proposed by {prop['create_by']})", expanded=True):
+                st.write(f"**justification:**{prop[justification']}")
+                st.info(f" ** Gemini Analysis:** {prop['ai_analysis']}")
+
+                #show current votes
+                votes = prop.get("votes",{})
+                st.caption(f"Current Votes: {votes if votes else 'None yet'}")
+
+                col1,col2 = st.columns(2)
+                with col1:
+                    if st.button(" Approve",key=f"app_{prop['id']}"):
+                        success,msg = db.cast_vote(venture_slug, prop['id'], current_user,"APPROVE")
+                    if success:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            with col2:
+                if st.button("Deny", key=f"den{prop['id']}"):
+                    success, msg = db.cast_vote(venture_slug, prop['id'], current_user, "DENY")    
+                if success:st.warning(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
