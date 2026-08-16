@@ -20,6 +20,21 @@ Architecture notes (v1.3 - cloud-native rewrite):
   (`@firestore.transactional`), so two near-simultaneous approvals can't both
   read the same stale balance and overdraw the pool - a real race condition
   once multiple co-founders are acting concurrently.
+
+v1.4 bugfix pass:
+- exit_venture / delete_venture_recursive / get_pending_proposals now accept
+  the venture DISPLAY NAME (matching how app.py calls them) and slugify
+  internally, instead of silently expecting an already-slugified string.
+- Fixed typo: delete_venture_recurive -> delete_venture_recursive (this is
+  what app.py was actually calling, so the delete button was crashing).
+- Fixed get_pending_proposals filtering on status == "pending" when every
+  proposal is actually written with status == "PENDING" - this was the
+  reason the co-founder voting UI never showed anything.
+- All functions now reuse the single firebase_admin-initialized `db` client
+  instead of spinning up a fresh, separately-authenticated firestore.Client().
+- Fixed create_pending_proposal: it checked .exists on a brand-new,
+  not-yet-written document reference (always False -> always raised), and
+  stored cost as the literal string " float(cost)" instead of a real float.
 """
 import os
 import re
@@ -62,7 +77,7 @@ def _init_firebase() -> None:
 
 # Run Firebase initialisation and construct database client
 _init_firebase()
-db = firestore.Client()
+db = firestore.client()
 
 """Turns a venture name into a Firestore-safe/URL-safe, human-readable document ID."""
 def _slugify(name: str) -> str:
@@ -70,7 +85,7 @@ def _slugify(name: str) -> str:
     return slug or "venture"
 
 """Retrieves and Attaches the transactions and pending_votes subcollections to the primary venture data payload"""
-def _attach_ledger_data(document_reference: firestore.DocumentReference, snap): 
+def _attach_ledger_data(document_reference: firestore.DocumentReference, snap):
     """
     e.g. Attaches 'transaction + pending-vote' subcollections to a venture doc.
     -bike + 2 'YES'
@@ -177,6 +192,7 @@ def record_transaction(venture_name: str, item: str, cost: float, justification:
         return None
     payload = {
         "item": item,
+        "item_name": item,  # kept in sync with 'item' so the voting UI (which reads item_name) always has it
         "cost": float(cost),
         "justification": justification,
         "verdict": verdict,
@@ -190,7 +206,6 @@ def record_transaction(venture_name: str, item: str, cost: float, justification:
     elif verdict_upper == "REQUIRES_COFOUNDER_VOTE":
         payload["status"] = "PENDING"
         payload["votes"] = {}
-        payload["item_name"] = item
         venture_ref.collection("pending_votes").add(payload)
     else:  # REJECTED
         venture_ref.collection("transactions").add(payload)
@@ -223,33 +238,33 @@ def resolve_vote(venture_name, vote_id, approved):
 
 """
 Creates an explicit pending purchase proposal requiring co-founder multi-sig voting.
+(Not currently called by app.py - record_transaction() handles this inline. Left
+here, fixed, in case you wire a direct "propose without AI check" flow into
+app.py before the deadline.)
 """
-def create_pending_proposal(venture: str, item_name: str, cost: float, justification: str, ai_analysis: str, created_by: str):
+def create_pending_proposal(venture_name: str, item_name: str, cost: float, justification: str, ai_analysis: str, created_by: str):
     """Creates a new pending proposal for a venture."""
-    #check if the venture exists
-    #slug = _slugify(venture_name)
-    #venture_ref = db.collection("ventures").document(slug)
-    #then we load the ventures with pending votes
-    #proposal_ref = venture_ref.collection("pending_votes").document()
-    db = firestore.client()
-    proposal = db.collection("ventures").document(venture).collection("pending_votes").document()
-    if not proposal.get().exists:
-        raise ValueError(f"Venture '{venture}' does not exist.")
+    slug = _slugify(venture_name)
+    venture_ref = db.collection("ventures").document(slug)
+    if not venture_ref.get().exists:
+        raise ValueError(f"Venture '{venture_name}' does not exist.")
 
+    proposal_ref = venture_ref.collection("pending_votes").document()
     proposal_payload = {
-        "id": proposal.id,
+        "id": proposal_ref.id,
         "item_name": item_name,
-        "cost":" float(cost)",
+        "item": item_name,
+        "cost": float(cost),
         "justification": justification,
         "ai_analysis": ai_analysis,
         "created_by": created_by,
         "timestamp": firestore.SERVER_TIMESTAMP,
         "status": "PENDING",
-        "votes": {} #Maps user_id -> "APPROVE" or "DENY"
+        "votes": {}  # Maps user_id -> "APPROVE" or "DENY"
     }
-    proposal.set(proposal_payload)
-    print(f"Created new pending proposal for venture: {venture}")
-    return proposal.id
+    proposal_ref.set(proposal_payload)
+    print(f"Created new pending proposal for venture: {venture_name}")
+    return proposal_ref.id
 
 
 """
@@ -325,26 +340,29 @@ def cast_vote(venture_name: str, proposal_id: str, user_id: str, vote: str, requ
 
 
 """
-Retrives all the active pending proposals for a venture.
+Retrieves all the active pending proposals for a venture.
+Accepts the venture DISPLAY NAME (matching how app.py calls it) and slugifies
+internally. Filters on status == "PENDING" to match what record_transaction()
+and create_pending_proposal() actually write.
 """
-def get_pending_proposals(venture_slug: str) ->list[dict]:
-    db=firestore.Client()
-    proposals_stream = db.collection("ventures").document(venture_slug).collection("pending_votes")\
-        .where("status","==","pending").stream()
-    return [{** doc.to_dict(),"id":doc.id} for doc in proposals_stream]
+def get_pending_proposals(venture_name: str) -> list[dict]:
+    slug = _slugify(venture_name)
+    proposals_stream = db.collection("ventures").document(slug).collection("pending_votes") \
+        .where("status", "==", "PENDING").stream()
+    return [{**doc.to_dict(), "id": doc.id} for doc in proposals_stream]
 
 
 """
 Removes a member from a venture.
 if no members remain, delete the venture and its subcollections
 """
-def exit_venture(venture_slug:str, user_id:str) -> tuple[bool,str]:
-    db = firestore.client()
-    venture = db.collection("ventures").document(venture_slug)
+def exit_venture(venture_name: str, user_id: str) -> tuple[bool, str]:
+    slug = _slugify(venture_name)
+    venture = db.collection("ventures").document(slug)
 
     @firestore.transactional
     def execute_exit(tx):
-        venture_snapshot = venture.get(transaction = tx)
+        venture_snapshot = venture.get(transaction=tx)
         if not venture_snapshot.exists:
            return False, "venture not found."
 
@@ -361,7 +379,7 @@ def exit_venture(venture_slug:str, user_id:str) -> tuple[bool,str]:
         if len(members) > 0:
             tx.update(venture,{"members": members})
             return True, (
-               f"Successfully exited {data.get('name',venture_slug)}. "
+               f"Successfully exited {data.get('name',venture_name)}. "
                f"Remaining co-founders: {len(members)}."
             )
         #If no members are left, purge the venture document
@@ -369,19 +387,20 @@ def exit_venture(venture_slug:str, user_id:str) -> tuple[bool,str]:
 
         return True, (
             f"you were the last member. "
-            f"Venture '{data.get('name',venture_slug)}' has been deleted."
+            f"Venture '{data.get('name',venture_name)}' has been deleted."
         )
    
     active_transaction = db.transaction()
     return execute_exit(active_transaction)
 
-def delete_venture_recurive( venture_slug: str):
+
+def delete_venture_recursive(venture_name: str):
     """
     Completely deletes a venture and all nested subcollections (transactions, pending_votes).
     Use this if a co-founder explicitly triggers 'Dissolve Venture'.
     """
-    db = firestore.Client()
-    venture = db.collection("ventures").document(venture_slug)
+    slug = _slugify(venture_name)
+    venture = db.collection("ventures").document(slug)
 
     # delete subcollections first
     for subCollection in ["transactions","pending_votes"]:
@@ -391,7 +410,4 @@ def delete_venture_recurive( venture_slug: str):
 
     # Delete main venture document
     venture.delete()
-    return True,"Venture and all associated ledgers/votes have been permanently deleted"        
-
-
-      
+    return True,"Venture and all associated ledgers/votes have been permanently deleted"
