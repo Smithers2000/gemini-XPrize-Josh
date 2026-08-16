@@ -5,8 +5,9 @@ Date: 8/15/2026
 Description: Main entry point for the Streamlit dashboard application.
 Coordinates user identity simulation, venture creation, spending proposals,
 and multi-sig co-founder voting.
+version 1.4
 """
-
+#TODO CONTINUE TO DEBUG FROM HERE!
 import streamlit as st
 import database as db
 import gemini_engine as ge

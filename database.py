@@ -62,7 +62,7 @@ def _init_firebase() -> None:
 
 # Run Firebase initialisation and construct database client
 _init_firebase()
-db = firestore.client()
+db = firestore.Client()
 
 """Turns a venture name into a Firestore-safe/URL-safe, human-readable document ID."""
 def _slugify(name: str) -> str:
