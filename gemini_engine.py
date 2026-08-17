@@ -45,10 +45,10 @@ def get_active_model():
     print("******** USING NEW GEMINI_ENGINE.PY ********")
     return "gemini-3.6-flash"
 
-def evaluate_spend_proposal(project_context, item_name, amount, justification):
     """
     Evaluates a purchase request using Gemini as an automated compliance guardrail.
     """
+def evaluate_spend_proposal(project_context, item_name, amount, justification):
     prompt = f"""
     You are BusiCash AI, an automated financial compliance guardrail for student joint ventures.
     
@@ -64,12 +64,15 @@ def evaluate_spend_proposal(project_context, item_name, amount, justification):
 
     selected_model = get_active_model()
     print(f"Selected Model for Evaluation: {selected_model}")
+    print("\n================ [GEMINI API REQUEST] ================")
+    print(f"PAYLOAD SENT TO GEMINI:\n{prompt}")
     
     try:
         response = client.models.generate_content(
             model=selected_model,
             contents=prompt,
         )
+        
         return response.text
     except APIError as e:
         return f"⚠️ **Gemini API Error ({selected_model})**: {str(e)}"
