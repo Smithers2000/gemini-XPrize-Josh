@@ -39,8 +39,8 @@ v1.4 bugfix pass:
 import os
 import re
 import firebase_admin
-import google.cloud.firestore as firestore
-from firebase_admin import credentials
+# import google.cloud.firestore as firestore
+from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
 
 #load enviroment variables from local .env file
